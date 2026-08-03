@@ -10,10 +10,11 @@ wheels/
 .venv
 
 # notes
-notes/*
+notes/
 
 # env
 .env*
+!.env.example
 
 # vector db
-chroma_db/*
+chroma_db/

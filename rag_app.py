@@ -30,7 +30,7 @@ chunks = text_splitter.split_documents(document)
 print("Creating vector database...")
 embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-001")
 vector_db = Chroma.from_documents(
-    documents=document,
+    documents=chunks,
     embedding=embeddings,
     persist_directory="./chroma_db"
 )
