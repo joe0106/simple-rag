@@ -13,5 +13,9 @@ class Settings(BaseSettings):
     evaluator_model: str = "gemini-3.5-flash"
     answer_model: str = "gemini-3.6-flash"
 
+    #document processing
+    chunk_size: int = 500
+    chunk_overlap: int = 50
+
     class Config:
         env_file = env_file_name

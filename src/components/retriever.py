@@ -1,15 +1,18 @@
 from typing import List
+from pathlib import Path
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
-from langchain_community.vectorstores import Chroma
-from langchain_core.documents import Document
-from models import SearchResult
+from langchain_core.documents import Document as LCD
+from langchain_chroma import Chroma
+from langchain_community.document_loaders import PyPDFLoader
+from models import SearchResult, Document
 
 class Retriever():
     def __init__(self, embed_model: str = "gemini-embedding-001", vector_store: str = None):
-        self.embeds = GoogleGenerativeAIEmbeddings(model=embed_model)
-        self.chroma_db = Chroma(
+        self._embeds = GoogleGenerativeAIEmbeddings(model=embed_model)
+        self._chroma_db = Chroma(
             collection_name="documents",
-            embedding_function=self.embeds,
+            embedding_function=self._embeds,
             persist_directory=vector_store
         )
         self.persist_dir = vector_store
@@ -25,7 +28,7 @@ class Retriever():
         
     def semantic_search(self, query: str, top_k: int = 2) -> List[SearchResult]:
         """similarity_search_with_score()預設使用的是歐式距離，回傳的分數是「距離」，越小代表越相關"""
-        results = self.chroma_db.similarity_search_with_score(
+        results = self._chroma_db.similarity_search_with_score(
             query=query,
             k=top_k
         )
@@ -42,7 +45,7 @@ class Retriever():
         filter = {
             "$or": [{"$contains": keyword} for keyword in keywords]
         }
-        results = self.chroma_db.similarity_search(
+        results = self._chroma_db.similarity_search(
             query=" ".join(keywords),
             k=top_k,
             where_document=filter
@@ -67,7 +70,7 @@ class Retriever():
     def hybrid_search(self):
         ...
 
-    def addDocuments(self):
+    def load_predefined_docs(self):
         docs = [Document(
                     page_content="""
                     Hello, my name is Julian Vance, and I am an undergraduate student currently pursuing a Bachelor of Science in Economics with a minor in International Relations. Driven by a keen interest in global market trends and public policy, I have dedicated my academic career to mastering quantitative data analysis and economic modeling. My long-term professional objective is to contribute to macroeconomic research and strategic financial consulting within an international institution. I consistently look for opportunities to bridge the gap between rigorous academic theory and practical, real-world fiscal applications.
@@ -86,6 +89,48 @@ class Retriever():
                     """,
                     metadata={"source": "university"}
                 )]
-        self.chroma_db.add_documents(
+        return self._chroma_db.add_documents(
             documents=docs
         )
+
+    async def add_documents(self, docs: List[Document]) -> List[str]:
+        # model transformation from custom to langchain_core.documents.Documents
+        docs = [
+            LCD(page_content=doc.text,)
+            for doc in docs
+        ]
+
+        return await self._chroma_db.aadd_documents(
+            documents=docs
+        )
+
+    async def load_pdf_by_local_path(self, file: str, file_ext: str, size: int = 500, overlap: int = 50):
+        dir_path = Path(__file__).parent.parent.resolve()
+        file_path = Path(f"{dir_path}/docs/{file}.{file_ext}")
+        if not file_path.is_file():
+            raise FileNotFoundError("file not found")
+        if file_ext != "pdf":
+            raise Exception(f"Cannot proccess requested file ext: {file_ext}")
+        loader = PyPDFLoader(file_path)
+        doc = loader.load()
+
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size = size,
+            chunk_overlap = overlap
+        )
+        chunks = text_splitter.split_documents(doc)
+        return await self._chroma_db.aadd_documents(
+            documents=chunks
+        )
+
+    async def delete_doc_by_ids(self, doc_id: str):
+        return await self._chroma_db.adelete(doc_id)
+
+    def reset_collection(self):
+        self._chroma_db.reset_collection()
+
+    def get_collection_documents(self):
+        return self._chroma_db.get()
+
+    def get_collections(self):
+        return self._chroma_db._client.list_collections()

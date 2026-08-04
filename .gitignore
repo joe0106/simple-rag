@@ -18,3 +18,5 @@ notes/
 
 # vector db
 chroma_db/
+
+.DS_Store
