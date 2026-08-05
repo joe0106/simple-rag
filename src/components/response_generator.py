@@ -1,5 +1,5 @@
 from typing import List
-from models import SearchResult, Citation, RAGResponse
+from models import SearchResult, Citation, RAGResponse, RAGResponseStatus
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
@@ -58,5 +58,6 @@ class LLMResponseGenerotor:
         return RAGResponse(
             answer=response["answer"],
             citations=citations,
-            confidence_score=float(response["confidence_score"])
+            confidence_score=float(response["confidence_score"]),
+            status=RAGResponseStatus.SUCCESS
         )

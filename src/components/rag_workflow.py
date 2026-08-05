@@ -2,6 +2,7 @@ from components.query_remaster import QueryRemaster
 from components.retriever import Retriever
 from components.evaluator import Evaluator
 from components.response_generator import LLMResponseGenerotor
+from models import RAGResponse, RAGResponseStatus
 
 class RAGWorkFlow():
     def __init__(
@@ -31,7 +32,11 @@ class RAGWorkFlow():
         #evaluate
         evaluate_score = self.evaluator.evaluate(query, context)
         if self.completion_threshold > evaluate_score:
-            return None
+            return RAGResponse(
+                answer="Failed to answer with reliable response due to insufficient context",
+                citations=[],
+                status=RAGResponseStatus.INSUFFICIENT_CONTEXT
+            )
         
         #response generate
         rag_response = self.llm_res_gen.generate_answer(query, context)

@@ -29,11 +29,21 @@ class Citation:
     metadata: Dict
     relevance_score: float
 
+class RAGResponseStatus:
+    SUCCESS = 1
+    INSUFFICIENT_CONTEXT = 2
+    NO_CONTEXT = 3
+    # INVALID_QUERY
+    # DEPENDENCY_ERROR
+    # INTERNAL_ERROR
+
 @dataclass
 class RAGResponse:
     answer: str
     citations: List[Citation]
-    confidence_score: float
+    confidence_score: float = 0.0
+    status: RAGResponseStatus
+    message: str = ""
 
 class Collection(BaseModel):
     id: str
