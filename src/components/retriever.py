@@ -71,19 +71,19 @@ class Retriever():
         ...
 
     def load_predefined_docs(self):
-        docs = [Document(
+        docs = [LCD(
                     page_content="""
                     Hello, my name is Julian Vance, and I am an undergraduate student currently pursuing a Bachelor of Science in Economics with a minor in International Relations. Driven by a keen interest in global market trends and public policy, I have dedicated my academic career to mastering quantitative data analysis and economic modeling. My long-term professional objective is to contribute to macroeconomic research and strategic financial consulting within an international institution. I consistently look for opportunities to bridge the gap between rigorous academic theory and practical, real-world fiscal applications.
                     """,
                     metadata={"source": "student"}
                 ),
-                Document(
+                LCD(
                     page_content="""
                     Organization: The Undergraduate Economics & Finance SocietyCurrent Role: Vice President of Research & AnalyticsKey Duties: Managing a team of student analysts to publish quarterly campus market reports.Secondary Club: Model United Nations (Active Member, Finance Committee Lead)
                     """,
                     metadata={"source": "club"}
                 ),
-                Document(
+                LCD(
                     page_content="""
                     Institution: Prestige State UniversityAcademic Year: Junior (Third Year)Current GPA: 3.87 / 4.00Expected Graduation: May 2028
                     """,

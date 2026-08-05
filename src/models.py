@@ -1,11 +1,11 @@
+from enum import Enum
+from typing import Any, Dict, List, Annotated
+from pydantic import BaseModel, Field
 from dataclasses import dataclass
-from typing import Dict, List, Any
-from pydantic import BaseModel
 
-@dataclass
-class Document:
+class Document(BaseModel):
     text: str
-    metadata: Dict = None
+    metadata: Annotated[Dict[str, Any], Field(default_factory=dict)]
 
 @dataclass
 class SearchResult:
@@ -23,30 +23,25 @@ class DocumentPathLoadRequest(BaseModel):
     path: str
     extension: str
     
-@dataclass
-class Citation:
+class Citation(BaseModel):
     text: str
-    metadata: Dict
+    metadata: Annotated[Dict[str, Any], Field(default_factory=dict)]
     relevance_score: float
 
-class RAGResponseStatus:
-    SUCCESS = 1
-    INSUFFICIENT_CONTEXT = 2
-    NO_CONTEXT = 3
-    # INVALID_QUERY
-    # DEPENDENCY_ERROR
-    # INTERNAL_ERROR
+class RAGResponseStatus(str, Enum):
+    SUCCESS = "success"
+    INSUFFICIENT_CONTEXT = "insufficient_context"
+    NO_CONTEXT = "no_context"
 
-@dataclass
-class RAGResponse:
+class RAGResponse(BaseModel):
     answer: str
     citations: List[Citation]
     confidence_score: float = 0.0
-    status: RAGResponseStatus
+    status: RAGResponseStatus = RAGResponseStatus.SUCCESS
     message: str = ""
 
 class Collection(BaseModel):
     id: str
     name: str
     database: str
-    metadata: Dict[str, Any]
+    metadata: Annotated[Dict[str, Any], Field(default_factory=dict)]

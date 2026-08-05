@@ -6,7 +6,14 @@ from components.evaluator import Evaluator
 from components.response_generator import LLMResponseGenerotor
 from components.rag_workflow import RAGWorkFlow
 from config import Settings
-from models import QueryRequest, RAGResponse, Document, Collection, DocumentPathLoadRequest
+from models import (
+    QueryRequest,
+    RAGResponse,
+    RAGResponseStatus,
+    Document,
+    Collection,
+    DocumentPathLoadRequest,
+)
 
 
 promptRouter = APIRouter(
@@ -46,9 +53,31 @@ workflow = RAGWorkFlow(
 @promptRouter.post("/query", response_model=RAGResponse)
 async def process_query(request: QueryRequest):
     """execute the RAG workflow by passing in the prompt to RAGWorkflow"""
-    response = workflow.execute(request.query)
-    if not response:
-        return HTTPException(status_code=400, detail="query cannot be processed")
+    if not request.query.strip():
+        raise HTTPException(status_code=400, detail="query cannot be empty")
+
+    try:
+        response = workflow.execute(request.query)
+    except (TimeoutError, ConnectionError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="RAG dependency is temporarily unavailable",
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="query processing failed",
+        ) from exc
+
+    if response is None:
+        return RAGResponse(
+            answer="I don't have enough information in the knowledge base to answer this question reliably.",
+            citations=[],
+            confidence_score=0.0,
+            status=RAGResponseStatus.INSUFFICIENT_CONTEXT,
+            message="The retrieved context did not meet the completion threshold.",
+        )
+
     return response
 
 # DOCUMEBNT Router
@@ -64,19 +93,32 @@ async def load_documents_by_filepath(request: DocumentPathLoadRequest):
     try:
         doc_ids = await retriever.load_pdf_by_local_path(request.path.lower(), request.extension.lower())
         return f"{len(doc_ids)} doc/chunks loaded into vector database."
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="document file not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (TimeoutError, ConnectionError) as exc:
+        raise HTTPException(status_code=503, detail="vector database is temporarily unavailable") from exc
     except Exception as e:
-        raise f"load_documents_by_filepath() failed: {e}"
+        raise HTTPException(status_code=500, detail="document loading failed") from e
 
 @docRouter.post("")
 async def create_document(request: List[Document]):
     """Add a new document into chroma db \"documents\" collection"""
+    if not request:
+        raise HTTPException(status_code=400, detail="at least one document is required")
+
     try:
         ids = await retriever.add_documents(request)
         if not ids:
-            raise HTTPException(status_code=400, detail="failed to add document")
+            raise HTTPException(status_code=500, detail="document IDs were not returned")
         return f"document: {ids} created successfully"
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"document add request cannot be processed: {e}")
+    except HTTPException:
+        raise
+    except (TimeoutError, ConnectionError) as exc:
+        raise HTTPException(status_code=503, detail="vector database is temporarily unavailable") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="document add request failed") from exc
 
 @docRouter.get("")
 def get_collection_documents():
@@ -88,8 +130,10 @@ def reset_collection():
     try:
         retriever.reset_collection()
         return "vector db reset"
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"vector db cannot be deleted: {e}")
+    except (TimeoutError, ConnectionError) as exc:
+        raise HTTPException(status_code=503, detail="vector database is temporarily unavailable") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="vector database reset failed") from exc
 
 @docRouter.delete("/id/{id}")
 async def delete_doc_by_id(id: str):
@@ -97,14 +141,22 @@ async def delete_doc_by_id(id: str):
     try:
         await retriever.delete_doc_by_ids(id)
         return f"document deleted, id: {id}"
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"documents cannot be deleted: {e}")
+    except (TimeoutError, ConnectionError) as exc:
+        raise HTTPException(status_code=503, detail="vector database is temporarily unavailable") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="document deletion failed") from exc
 
 # COLLECTION Router
 @collectionRouter.get("")
 def get_collections():
     """list collections in vector db"""
-    collections = retriever.get_collections()
+    try:
+        collections = retriever.get_collections()
+    except (TimeoutError, ConnectionError) as exc:
+        raise HTTPException(status_code=503, detail="vector database is temporarily unavailable") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="collection listing failed") from exc
+
     return [
         Collection(
             id=str(collection.id),
