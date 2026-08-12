@@ -68,6 +68,12 @@ curl -X POST http://localhost:8000/prompts/query \
 
 回應包含 `answer`、`citations`、`confidence_score` 與 `status`。若 context 不足，`status` 會是 `insufficient_context`。
 
+#### 範例一：Swagger doc介面查詢
+![alt text](images/api-doc.png)
+
+#### 範例二：API endpoint呼叫streaming結果
+![alt text](images/query-streaming.png)
+
 ### Streaming 查詢
 
 ```bash
