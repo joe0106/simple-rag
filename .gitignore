@@ -19,4 +19,6 @@ notes/
 # vector db
 chroma_db/
 
+# others
 .DS_Store
+README-prompt.md
