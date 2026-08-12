@@ -20,15 +20,15 @@ class Retriever():
     def execute(self, query: str, keywords: List[str]):
         self.retrieve(query, keywords)
 
-    def retrieve(self, query: str, keywords: List[str]):
-        semantic_res = self.semantic_search(query)
-        keyword_res = self.keyword_search(keywords)
+    async def retrieve(self, query: str, keywords: List[str]):
+        semantic_res = await self.semantic_search(query)
+        keyword_res = await self.keyword_search(keywords)
         reranked_res = self.rerank(semantic_res, keyword_res)
         return reranked_res
         
-    def semantic_search(self, query: str, top_k: int = 2) -> List[SearchResult]:
+    async def semantic_search(self, query: str, top_k: int = 2) -> List[SearchResult]:
         """similarity_search_with_score()預設使用的是歐式距離，回傳的分數是「距離」，越小代表越相關"""
-        results = self._chroma_db.similarity_search_with_score(
+        results = await self._chroma_db.asimilarity_search_with_score(
             query=query,
             k=top_k
         )
@@ -40,12 +40,12 @@ class Retriever():
             ) for res in results
         ]
 
-    def keyword_search(self, keywords: str, top_k: int = 2) -> List[SearchResult]:
+    async def keyword_search(self, keywords: str, top_k: int = 2) -> List[SearchResult]:
         """關鍵字過濾+語意排序"""
         filter = {
             "$or": [{"$contains": keyword} for keyword in keywords]
         }
-        results = self._chroma_db.similarity_search(
+        results = await self._chroma_db.asimilarity_search(
             query=" ".join(keywords),
             k=top_k,
             where_document=filter

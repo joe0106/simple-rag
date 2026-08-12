@@ -16,32 +16,24 @@ class QueryRemaster:
             model=model,
             temperature=0.7
         )
-    def execute():
-        ...
-    def reformulate(self, query: str):
+    
+    async def reformulate(self, query: str):
         prompt = """Given the user query, reformulate it to be more precise and extract key search terms.
-Return your response in this JSON format:
-{{
-    "refined_query": "reformulated question",
-    "keywords": ["key1", "key2", "key3"]
-}}
+                    Return your response in this JSON format:
+                    {{
+                        "refined_query": "reformulated question",
+                        "keywords": ["key1", "key2", "key3"]
+                    }}
 
-Only return the JSON object, no other text.
+                    Only return the JSON object, no other text.
 
-User Query: {question}"""
+                    User Query: {question}"""
         
         prompt = PromptTemplate.from_template(prompt)
-        #todo: add retriver from vector db
         
-        # rag_chain = (
-        #     { "question": RunnablePassthrough() }
-        #     | prompt
-        #     | self.llm
-        #     | JsonOutputParser()
-        # )
         rag_chain = prompt | self.llm | JsonOutputParser()
 
-        response = rag_chain.invoke({"question": query})
+        response = await rag_chain.ainvoke({"question": query})
 
         return RemasteredQuery(
             remastered_query=response["refined_query"],

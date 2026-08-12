@@ -9,9 +9,8 @@ class Evaluator():
             model=model,
             temperature=0.7
         )
-    def execute():
-        ...
-    def evaluate(self, query: str, context: List[SearchResult]):
+
+    async def evaluate(self, query: str, context: List[SearchResult]):
         # combine context
         format_context = "\n\n".join([
             f"Context {index + 1}:\n{content.text}"
@@ -39,7 +38,7 @@ class Evaluator():
 
         rag_chain = prompt | self.llm
 
-        result_score = rag_chain.invoke({
+        result_score = await rag_chain.ainvoke({
             "context": format_context,
             "query": query
         })

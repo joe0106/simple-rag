@@ -1,7 +1,7 @@
 from components.query_remaster import QueryRemaster
 from components.retriever import Retriever
 from components.evaluator import Evaluator
-from components.response_generator import LLMResponseGenerotor
+from components.response_generator import LLMResponseGenerator
 from models import RAGResponse, RAGResponseStatus
 
 class RAGWorkFlow():
@@ -10,7 +10,7 @@ class RAGWorkFlow():
             query_remaster: QueryRemaster, 
             retriever: Retriever,
             evaluator: Evaluator,
-            llm_res_gen: LLMResponseGenerotor,
+            llm_res_gen: LLMResponseGenerator,
             completion_threshold: float = 0.7,
         ):
         self.remaster = query_remaster
@@ -19,18 +19,13 @@ class RAGWorkFlow():
         self.completion_threshold = completion_threshold
         self.llm_res_gen = llm_res_gen
 
-    def execute(self, query: str):
-        #query remaster
-        remastered_result = self.remaster.reformulate(query)
-
-        #retriever
-        context = self.retriever.retrieve(
-            remastered_result.remastered_query,
-            remastered_result.keywords
-        )
+    async def execute(self, query: str):
+        """execute and return response once"""
+        #get context
+        context = await self.retrieve_context(query)
 
         #evaluate
-        evaluate_score = self.evaluator.evaluate(query, context)
+        evaluate_score = await self.evaluator.evaluate(query, context)
         if self.completion_threshold > evaluate_score:
             return RAGResponse(
                 answer="Failed to answer with reliable response due to insufficient context",
@@ -41,3 +36,33 @@ class RAGWorkFlow():
         #response generate
         rag_response = self.llm_res_gen.generate_answer(query, context)
         return rag_response
+
+    async def execute_streaming(self, query: str):
+        """execute with streaming mode"""
+        #get context
+        context = await self.retrieve_context(query)
+
+        #evaluate
+        evaluate_score = await self.evaluator.evaluate(query, context)
+        if self.completion_threshold > evaluate_score:
+            yield "Failed to answer with reliable response due to insufficient context"
+            return
+
+        try:
+            #stream generated response
+            async for chunk in self.llm_res_gen.generate_answer_stream(query, context):
+                yield chunk
+        except Exception:
+            raise
+
+    async def retrieve_context(self, query: str):
+        #query remaster
+        remastered_result = await self.remaster.reformulate(query)
+
+        #retriever
+        context = await self.retriever.retrieve(
+            remastered_result.remastered_query,
+            remastered_result.keywords
+        )
+
+        return context

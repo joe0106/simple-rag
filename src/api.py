@@ -1,9 +1,10 @@
 from typing import List
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Body
+from fastapi.responses import StreamingResponse
 from components.query_remaster import QueryRemaster
 from components.retriever import Retriever
 from components.evaluator import Evaluator
-from components.response_generator import LLMResponseGenerotor
+from components.response_generator import LLMResponseGenerator
 from components.rag_workflow import RAGWorkFlow
 from config import Settings
 from models import (
@@ -39,7 +40,7 @@ settings = Settings()
 remaster = QueryRemaster(model=settings.remaster_model)
 retriever = Retriever(embed_model=settings.embedding_model, vector_store=settings.vector_store)
 evaluator = Evaluator(model=settings.evaluator_model)
-llm_response_generator = LLMResponseGenerotor(model=settings.answer_model)
+llm_response_generator = LLMResponseGenerator(model=settings.answer_model)
 
 #init wf
 workflow = RAGWorkFlow(
@@ -50,14 +51,49 @@ workflow = RAGWorkFlow(
 )
 
 # PROMPT Router
+@promptRouter.post("/query-stream")
+async def process_query_stream(request: QueryRequest = Body(
+    openapi_examples={
+        "query-1": {
+            "summary": "query-1",
+            "value": {
+                "query": "有關員工手冊請和我說明遠端辦公的規定"
+            }
+        }
+    }
+)) -> StreamingResponse:
+    async def response_stream():
+        if not request.query.strip():
+            raise HTTPException(status_code=400, detail="query cannot be empty")
+        try:
+            async for chunk in workflow.execute_streaming(request.query):
+                yield chunk
+        except Exception:
+            yield "\nStreaming LLM Response failed."
+
+    # todo: proper response when 5xx?
+    return StreamingResponse(
+        response_stream(),
+        media_type="text/plain"
+    )
+
 @promptRouter.post("/query", response_model=RAGResponse)
-async def process_query(request: QueryRequest):
+async def process_query(request: QueryRequest = Body(
+    openapi_examples={
+        "query-1": {
+            "summary": "query-1",
+            "value": {
+                "query": "有關員工手冊請和我說明遠端辦公的規定"
+            }
+        }
+    }
+)):
     """execute the RAG workflow by passing in the prompt to RAGWorkflow"""
     if not request.query.strip():
         raise HTTPException(status_code=400, detail="query cannot be empty")
 
     try:
-        response = workflow.execute(request.query)
+        response = await workflow.execute(request.query)
     except (TimeoutError, ConnectionError) as exc:
         raise HTTPException(
             status_code=503,
@@ -80,16 +116,26 @@ async def process_query(request: QueryRequest):
 
     return response
 
-# DOCUMEBNT Router
+# DOCUMENT Router
 @docRouter.post("/predefined")
 async def load_predefined_documents():
-    """load pre-defined documents as the RAG knowledge base"""
+    """load pre-defined documents(same documents of \"create_document\" endpoint's example) as the RAG knowledge base"""
     loaded_docs = retriever.load_predefined_docs()
     return f"{len(loaded_docs)} pre-defined documents loaded"
 
 @docRouter.post("/load_doc")
-async def load_documents_by_filepath(request: DocumentPathLoadRequest):
-    """load document from project path"""
+async def load_documents_by_filepath(request: DocumentPathLoadRequest = Body(
+    openapi_examples={
+        "sample.doc": {
+            "summary": "sample doc path",
+            "value": {
+                "path": "sample_doc",
+                "extension": "pdf"
+            }
+        }
+    }
+)):
+    """load a \"TechCorp Employee Handbook\" document from project path"""
     try:
         doc_ids = await retriever.load_pdf_by_local_path(request.path.lower(), request.extension.lower())
         return f"{len(doc_ids)} doc/chunks loaded into vector database."
@@ -103,7 +149,37 @@ async def load_documents_by_filepath(request: DocumentPathLoadRequest):
         raise HTTPException(status_code=500, detail="document loading failed") from e
 
 @docRouter.post("")
-async def create_document(request: List[Document]):
+async def create_document(request: List[Document] = Body(
+    openapi_examples={
+        "student": {
+            "summary": "the student's document",
+            "value": {
+                "text": "Hello, my name is Julian Vance, and I am an undergraduate student currently pursuing a Bachelor of Science in Economics with a minor in International Relations. Driven by a keen interest in global market trends and public policy, I have dedicated my academic career to mastering quantitative data analysis and economic modeling. My long-term professional objective is to contribute to macroeconomic research and strategic financial consulting within an international institution. I consistently look for opportunities to bridge the gap between rigorous academic theory and practical, real-world fiscal applications.",
+                "metadata": {
+                    "source": "student"
+                }
+            }
+        },
+        "club": {
+            "summary": "the student's club document",
+            "value": {
+                "text": "Organization: The Undergraduate Economics & Finance SocietyCurrent Role: Vice President of Research & AnalyticsKey Duties: Managing a team of student analysts to publish quarterly campus market reports.Secondary Club: Model United Nations (Active Member, Finance Committee Lead)",
+                "metadata": {
+                    "source": "club"
+                }
+            }
+        },
+        "university": {
+            "summary": "the student's university document",
+            "value": {
+                "text": "Institution: Prestige State UniversityAcademic Year: Junior (Third Year)Current GPA: 3.87 / 4.00Expected Graduation: May 2028",
+                "metadata": {
+                    "source": "university"
+                }
+            }
+        }
+    }
+)):
     """Add a new document into chroma db \"documents\" collection"""
     if not request:
         raise HTTPException(status_code=400, detail="at least one document is required")
@@ -122,6 +198,7 @@ async def create_document(request: List[Document]):
 
 @docRouter.get("")
 def get_collection_documents():
+    """get current documents of the default \"docments\" collection"""
     return retriever.get_collection_documents()
 
 @docRouter.delete("")
@@ -149,7 +226,7 @@ async def delete_doc_by_id(id: str):
 # COLLECTION Router
 @collectionRouter.get("")
 def get_collections():
-    """list collections in vector db"""
+    """list all collections in the vector db"""
     try:
         collections = retriever.get_collections()
     except (TimeoutError, ConnectionError) as exc:
