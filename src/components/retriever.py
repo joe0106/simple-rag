@@ -5,70 +5,88 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_core.documents import Document as LCD
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.retrievers import BM25Retriever
+from langchain_classic.retrievers import EnsembleRetriever
 from models import SearchResult, Document
 
 class Retriever():
-    def __init__(self, embed_model: str = "gemini-embedding-001", vector_store: str = None):
-        self._embeds = GoogleGenerativeAIEmbeddings(model=embed_model)
+    def __init__(
+        self,
+        api_key: str,
+        embed_model: str = "gemini-embedding-001",
+        vector_store: str = None,
+        top_k: int = 2,
+        ensemble_weights: List[float] | None = None,
+    ):
+        self._embeds = GoogleGenerativeAIEmbeddings(api_key=api_key, model=embed_model)
         self._chroma_db = Chroma(
             collection_name="documents",
             embedding_function=self._embeds,
             persist_directory=vector_store
         )
         self.persist_dir = vector_store
-        
+        self.top_k = top_k
+        self.ensemble_weights = ensemble_weights or [0.5, 0.5]
+        self._bm25_retriever = None
+        self._ensemble_retriever = None
+        self._refresh_retrievers()
+
     def execute(self, query: str, keywords: List[str]):
         self.retrieve(query, keywords)
 
     async def retrieve(self, query: str, keywords: List[str]):
-        semantic_res = await self.semantic_search(query)
-        keyword_res = await self.keyword_search(keywords)
-        reranked_res = self.rerank(semantic_res, keyword_res)
-        return reranked_res
-        
-    async def semantic_search(self, query: str, top_k: int = 2) -> List[SearchResult]:
-        """similarity_search_with_score()預設使用的是歐式距離，回傳的分數是「距離」，越小代表越相關"""
-        results = await self._chroma_db.asimilarity_search_with_score(
-            query=query,
-            k=top_k
-        )
+        """Retrieve context through the hybrid search pipeline."""
+        return await self.hybrid_search(query, keywords)
+
+    async def hybrid_search(self, query: str, keywords: List[str]) -> List[SearchResult]:
+        """Fuse Chroma semantic search and BM25 keyword search with RRF."""
+        if self._ensemble_retriever is None:
+            return []
+
+        ensemble_query = " ".join([query, *keywords]).strip()
+        documents = await self._ensemble_retriever.ainvoke(ensemble_query)
         return [
             SearchResult(
-                text = res[0].page_content,
-                metadata = res[0].metadata,
-                score = res[1]
-            ) for res in results
+                text=document.page_content,
+                metadata=document.metadata,
+                # EnsembleRetriever returns ranked documents rather than a
+                # comparable score. Keep a normalized rank score for callers.
+                score=1.0 / (rank + 1),
+            )
+            for rank, document in enumerate(documents)
         ]
 
-    async def keyword_search(self, keywords: str, top_k: int = 2) -> List[SearchResult]:
-        """關鍵字過濾+語意排序"""
-        filter = {
-            "$or": [{"$contains": keyword} for keyword in keywords]
-        }
-        results = await self._chroma_db.asimilarity_search(
-            query=" ".join(keywords),
-            k=top_k,
-            where_document=filter
+    def _refresh_retrievers(self):
+        """Rebuild the sparse retriever after the Chroma collection changes."""
+        vector_retriever = self._chroma_db.as_retriever(
+            search_kwargs={"k": self.top_k}
         )
-        return [
-            SearchResult(
-                text = res.page_content,
-                metadata = res.metadata,
-                score = 0.9 # -> 不該直接與semantic的距離分數比較
-            ) for res in results
+        collection = self._chroma_db.get(
+            include=["documents", "metadatas"]
+        )
+        page_contents = collection.get("documents") or []
+        metadatas = collection.get("metadatas") or []
+        documents = [
+            LCD(
+                page_content=page_content,
+                metadata=metadatas[index] or {} if index < len(metadatas) else {},
+            )
+            for index, page_content in enumerate(page_contents)
+            if page_content is not None
         ]
 
-    def rerank(self, semantic_results: List[SearchResult], keyword_results: List[SearchResult]) -> List[SearchResult]:
-        merged = {}
-        for res in semantic_results:
-            merged[res.text] = res
-        for res in keyword_results:
-            if res.text not in merged or res.score < merged[res.text].score:
-                merged[res.text] = res
-        return sorted(merged.values(), key=lambda x: x.score)
-
-    def hybrid_search(self):
-        ...
+        if documents:
+            self._bm25_retriever = BM25Retriever.from_documents(
+                documents,
+                k=self.top_k,
+            )
+            self._ensemble_retriever = EnsembleRetriever(
+                retrievers=[vector_retriever, self._bm25_retriever],
+                weights=self.ensemble_weights,
+            )
+        else:
+            self._bm25_retriever = None
+            self._ensemble_retriever = vector_retriever
 
     def load_predefined_docs(self):
         docs = [LCD(
@@ -89,20 +107,24 @@ class Retriever():
                     """,
                     metadata={"source": "university"}
                 )]
-        return self._chroma_db.add_documents(
+        ids = self._chroma_db.add_documents(
             documents=docs
         )
+        self._refresh_retrievers()
+        return ids
 
     async def add_documents(self, docs: List[Document]) -> List[str]:
         # model transformation from custom to langchain_core.documents.Documents
         docs = [
-            LCD(page_content=doc.text,)
+            LCD(page_content=doc.text, metadata=doc.metadata)
             for doc in docs
         ]
 
-        return await self._chroma_db.aadd_documents(
+        ids = await self._chroma_db.aadd_documents(
             documents=docs
         )
+        self._refresh_retrievers()
+        return ids
 
     async def load_pdf_by_local_path(self, file: str, file_ext: str, size: int = 500, overlap: int = 50):
         dir_path = Path(__file__).parent.parent.resolve()
@@ -119,15 +141,21 @@ class Retriever():
             chunk_overlap = overlap
         )
         chunks = text_splitter.split_documents(doc)
-        return await self._chroma_db.aadd_documents(
+        ids = await self._chroma_db.aadd_documents(
             documents=chunks
         )
+        self._refresh_retrievers()
+        return ids
 
     async def delete_doc_by_ids(self, doc_id: str):
-        return await self._chroma_db.adelete(doc_id)
+        result = await self._chroma_db.adelete(doc_id)
+        self._refresh_retrievers()
+        return result
 
     def reset_collection(self):
-        self._chroma_db.reset_collection()
+        result = self._chroma_db.reset_collection()
+        self._refresh_retrievers()
+        return result
 
     def get_collection_documents(self):
         return self._chroma_db.get()

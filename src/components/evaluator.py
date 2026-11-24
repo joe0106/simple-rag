@@ -4,8 +4,9 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import PromptTemplate
 
 class Evaluator():
-    def __init__(self, model: str = "gemini-3.5-flash"):
+    def __init__(self, api_key: str, model: str = "gemini-3.5-flash"):
         self.llm = ChatGoogleGenerativeAI(
+            api_key=api_key,
             model=model,
             temperature=0.7
         )

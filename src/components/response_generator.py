@@ -50,8 +50,9 @@ class BaseResponseGenerator(ABC):
         return prompt | self.llm | JsonOutputParser()
 
 class LLMResponseGenerator(BaseResponseGenerator):
-    def __init__(self, model: str = "gemini-3.5-flash"):
+    def __init__(self, api_key: str, model: str = "gemini-3.5-flash"):
         llm = ChatGoogleGenerativeAI(
+            api_key=api_key,
             model=model,
             temperature=0.7,
             max_output_tokens=1000,

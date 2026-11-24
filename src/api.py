@@ -37,10 +37,10 @@ all_routers = [
 settings = Settings()
 
 #components
-remaster = QueryRemaster(model=settings.remaster_model)
-retriever = Retriever(embed_model=settings.embedding_model, vector_store=settings.vector_store)
-evaluator = Evaluator(model=settings.evaluator_model)
-llm_response_generator = LLMResponseGenerator(model=settings.answer_model)
+remaster = QueryRemaster(settings.google_api_key, model=settings.remaster_model)
+retriever = Retriever(settings.google_api_key, embed_model=settings.embedding_model, vector_store=settings.vector_store)
+evaluator = Evaluator(settings.google_api_key, model=settings.evaluator_model)
+llm_response_generator = LLMResponseGenerator(settings.google_api_key, model=settings.answer_model)
 
 #init wf
 workflow = RAGWorkFlow(

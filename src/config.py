@@ -1,7 +1,8 @@
 from pathlib import Path
 from pydantic_settings import BaseSettings
 
-env_file_name = ".env"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+env_file_name = f"{PROJECT_ROOT}/.env"
 
 class Settings(BaseSettings):
     google_api_key: str
@@ -10,8 +11,8 @@ class Settings(BaseSettings):
     #Component model
     remaster_model: str = "gemini-3.5-flash-lite"
     embedding_model: str = "gemini-embedding-001"
-    evaluator_model: str = "gemini-3.5-flash"
-    answer_model: str = "gemini-3.6-flash"
+    evaluator_model: str = "gemini-3.5-flash-lite"
+    answer_model: str = "gemini-3.5-flash-lite"
 
     #document processing
     chunk_size: int = 500
