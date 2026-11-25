@@ -1,6 +1,7 @@
 from typing import List
 from pathlib import Path
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_cohere import CohereRerank
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_core.documents import Document as LCD
 from langchain_chroma import Chroma
@@ -16,9 +17,22 @@ class Retriever():
         embed_model: str = "gemini-embedding-001",
         vector_store: str = None,
         top_k: int = 2,
+        candidate_k: int = 10,
         ensemble_weights: List[float] | None = None,
+        cohere_api_key: str | None = None,
+        reranker_model: str = "rerank-v3.5",
     ):
+        if top_k < 1:
+            raise ValueError("top_k must be greater than zero")
+        if candidate_k < top_k:
+            raise ValueError("candidate_k must be greater than or equal to top_k")
+
         self._embeds = GoogleGenerativeAIEmbeddings(api_key=api_key, model=embed_model)
+        self._cohere_reranker = CohereRerank(
+            model=reranker_model,
+            top_n=top_k,
+            cohere_api_key=cohere_api_key,
+        )
         self._chroma_db = Chroma(
             collection_name="documents",
             embedding_function=self._embeds,
@@ -26,40 +40,76 @@ class Retriever():
         )
         self.persist_dir = vector_store
         self.top_k = top_k
+        self.candidate_k = candidate_k
         self.ensemble_weights = ensemble_weights or [0.5, 0.5]
         self._bm25_retriever = None
+        self._vector_retriever = None
         self._ensemble_retriever = None
         self._refresh_retrievers()
 
-    def execute(self, query: str, keywords: List[str]):
-        self.retrieve(query, keywords)
+    async def execute(self, query: str, keywords: List[str]):
+        #semantic_search_result = await self.execute_semantic_search(query)
+        #keyword_search_result = await self.execute_keyword_search(query, keywords)
+        return await self.retrieve(query, keywords)
+
+    async def execute_semantic_search(self, query: str):
+        return await self.semantic_search(query)
+
+    async def execute_keyword_search(self, query: str, keywords: List[str]):
+        return await self.keyword_search(query, keywords)
 
     async def retrieve(self, query: str, keywords: List[str]):
         """Retrieve context through the hybrid search pipeline."""
         return await self.hybrid_search(query, keywords)
 
+    async def semantic_search(self, query: str) -> List[SearchResult]:
+        results = await self._vector_retriever.ainvoke(query)
+        return self._documents_to_search_results(results)
+
+    async def keyword_search(self, query: str, keywords: List[str]) -> List[SearchResult]:
+        query = " ".join([query, *keywords]).strip()
+        results = await self._bm25_retriever.ainvoke(query)
+        return self._documents_to_search_results(results)
+
     async def hybrid_search(self, query: str, keywords: List[str]) -> List[SearchResult]:
-        """Fuse Chroma semantic search and BM25 keyword search with RRF."""
+        """Fuse semantic and keyword results, then rerank candidates with Cohere."""
         if self._ensemble_retriever is None:
             return []
 
         ensemble_query = " ".join([query, *keywords]).strip()
         documents = await self._ensemble_retriever.ainvoke(ensemble_query)
-        return [
-            SearchResult(
+        if not documents:
+            return []
+
+        fallback_results = self._documents_to_search_results(documents)
+        try:
+            reranked_documents = await self._cohere_reranker.acompress_documents(
+                documents,
+                ensemble_query,
+            )
+        except Exception:
+            return fallback_results[:self.top_k]
+
+        return self._documents_to_search_results(reranked_documents)[:self.top_k]
+
+    @staticmethod
+    def _documents_to_search_results(documents: List[LCD]) -> List[SearchResult]:
+        results = []
+        for rank, document in enumerate(documents):
+            score = document.metadata.get("relevance_score")
+            if not isinstance(score, (int, float)):
+                score = 1.0 / (rank + 1)
+            results.append(SearchResult(
                 text=document.page_content,
                 metadata=document.metadata,
-                # EnsembleRetriever returns ranked documents rather than a
-                # comparable score. Keep a normalized rank score for callers.
-                score=1.0 / (rank + 1),
-            )
-            for rank, document in enumerate(documents)
-        ]
+                score=float(score),
+            ))
+        return results
 
     def _refresh_retrievers(self):
         """Rebuild the sparse retriever after the Chroma collection changes."""
         vector_retriever = self._chroma_db.as_retriever(
-            search_kwargs={"k": self.top_k}
+            search_kwargs={"k": self.candidate_k}
         )
         collection = self._chroma_db.get(
             include=["documents", "metadatas"]
@@ -76,9 +126,10 @@ class Retriever():
         ]
 
         if documents:
+            self._vector_retriever = vector_retriever
             self._bm25_retriever = BM25Retriever.from_documents(
                 documents,
-                k=self.top_k,
+                k=self.candidate_k,
             )
             self._ensemble_retriever = EnsembleRetriever(
                 retrievers=[vector_retriever, self._bm25_retriever],

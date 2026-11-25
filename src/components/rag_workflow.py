@@ -60,7 +60,7 @@ class RAGWorkFlow():
         remastered_result = await self.remaster.reformulate(query)
 
         #retriever
-        context = await self.retriever.retrieve(
+        context = await self.retriever.execute(
             remastered_result.remastered_query,
             remastered_result.keywords
         )

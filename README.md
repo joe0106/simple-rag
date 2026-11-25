@@ -6,13 +6,13 @@
 ## 流程
 
 ```text
-問題 → QueryRemaster → Hybrid Retriever → Context Evaluator → Gemini 回答
+問題 → QueryRemaster → Hybrid Retriever → Cohere Reranking → Context Evaluator → Gemini 回答
 ```
 
 主要元件位於 `src/components/`：
 
 - `query_remaster.py`：改寫查詢並擷取關鍵字
-- `retriever.py`：ChromaDB 向量檢索、關鍵字檢索與 rerank
+- `retriever.py`：ChromaDB 向量檢索、BM25 關鍵字檢索、RRF 融合與 Cohere reranking
 - `evaluator.py`：判斷 context 是否足以回答問題
 - `response_generator.py`：產生同步或 streaming 回答
 - `rag_workflow.py`：串接完整 RAG 流程
@@ -29,6 +29,7 @@
 
 ```env
 GOOGLE_API_KEY=your-google-api-key
+COHERE_API_KEY=your-cohere-api-key
 VECTOR_STORE=./chroma_db
 ```
 
@@ -38,6 +39,7 @@ VECTOR_STORE=./chroma_db
 REMASTER_MODEL=gemini-3.5-flash-lite
 EMBEDDING_MODEL=gemini-embedding-001
 EVALUATOR_MODEL=gemini-3.5-flash
+RERANKER_MODEL=rerank-v3.5
 ANSWER_MODEL=gemini-3.6-flash
 CHUNK_SIZE=500
 CHUNK_OVERLAP=50
@@ -67,6 +69,8 @@ curl -X POST http://localhost:8000/prompts/query \
 ```
 
 回應包含 `answer`、`citations`、`confidence_score` 與 `status`。若 context 不足，`status` 會是 `insufficient_context`。
+
+檢索會先由 Chroma 向量檢索與 BM25 關鍵字檢索取得候選文件，再使用 EnsembleRetriever 的 RRF 融合排名。融合結果會交給 Cohere reranker 進行第二階段排序，最後取前兩筆文件作為 context。若 Cohere reranker 暫時失敗，系統會回退到 RRF 結果。
 
 #### Swagger UI 查詢介面
 ![Swagger UI 查詢介面](images/api-doc.png)

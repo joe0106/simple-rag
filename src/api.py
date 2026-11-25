@@ -38,7 +38,13 @@ settings = Settings()
 
 #components
 remaster = QueryRemaster(settings.google_api_key, model=settings.remaster_model)
-retriever = Retriever(settings.google_api_key, embed_model=settings.embedding_model, vector_store=settings.vector_store)
+retriever = Retriever(
+    settings.google_api_key,
+    embed_model=settings.embedding_model,
+    vector_store=settings.vector_store,
+    cohere_api_key=settings.cohere_api_key,
+    reranker_model=settings.reranker_model,
+)
 evaluator = Evaluator(settings.google_api_key, model=settings.evaluator_model)
 llm_response_generator = LLMResponseGenerator(settings.google_api_key, model=settings.answer_model)
 

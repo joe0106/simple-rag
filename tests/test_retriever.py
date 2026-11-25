@@ -21,21 +21,78 @@ class FakeEnsembleRetriever:
         return self.documents
 
 
+class FakeReranker:
+    def __init__(self, documents=None, error=None):
+        self.documents = documents
+        self.error = error
+        self.queries = []
+
+    async def acompress_documents(self, documents, query):
+        self.queries.append((documents, query))
+        if self.error:
+            raise self.error
+        return self.documents
+
+
 @pytest.mark.asyncio
 async def test_hybrid_search_uses_ensemble_and_combines_keywords():
     retriever = object.__new__(Retriever)
+    retriever.top_k = 2
     ensemble = FakeEnsembleRetriever([
         FakeDocument("semantic result", {"source": "vector"}),
         FakeDocument("keyword result", {"source": "bm25"}),
     ])
     retriever._ensemble_retriever = ensemble
+    retriever._cohere_reranker = FakeReranker([
+        FakeDocument("keyword result", {"source": "bm25", "relevance_score": 0.95}),
+        FakeDocument("semantic result", {"source": "vector", "relevance_score": 0.7}),
+    ])
 
     results = await retriever.hybrid_search("remote work", ["policy", "employee"])
 
     assert ensemble.queries == ["remote work policy employee"]
-    assert [result.text for result in results] == ["semantic result", "keyword result"]
+    assert [result.text for result in results] == ["keyword result", "semantic result"]
+    assert [result.score for result in results] == [0.95, 0.7]
+    assert results[0].metadata["source"] == "bm25"
+    assert retriever._cohere_reranker.queries[0][1] == "remote work policy employee"
+    assert [doc.page_content for doc in retriever._cohere_reranker.queries[0][0]] == [
+        "semantic result",
+        "keyword result",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_hybrid_search_uses_rank_score_fallback_when_cohere_has_no_score():
+    retriever = object.__new__(Retriever)
+    retriever.top_k = 2
+    retriever._ensemble_retriever = FakeEnsembleRetriever([
+        FakeDocument("first", {"source": "one"}),
+        FakeDocument("second", {"source": "two"}),
+    ])
+    retriever._cohere_reranker = FakeReranker([
+        FakeDocument("second"),
+        FakeDocument("first"),
+    ])
+
+    results = await retriever.hybrid_search("query", [])
+
+    assert [result.text for result in results] == ["second", "first"]
     assert [result.score for result in results] == [1.0, 0.5]
-    assert results[0].metadata == {"source": "vector"}
+
+
+@pytest.mark.asyncio
+async def test_hybrid_search_falls_back_when_reranker_fails():
+    retriever = object.__new__(Retriever)
+    retriever.top_k = 2
+    retriever._ensemble_retriever = FakeEnsembleRetriever([
+        FakeDocument("first"),
+        FakeDocument("second"),
+    ])
+    retriever._cohere_reranker = FakeReranker(error=TimeoutError())
+
+    results = await retriever.hybrid_search("query", [])
+
+    assert [result.text for result in results] == ["first", "second"]
 
 
 @pytest.mark.asyncio
@@ -64,6 +121,7 @@ async def test_retrieve_returns_empty_for_empty_collection():
 def test_refresh_retrievers_builds_bm25_from_collection(monkeypatch):
     retriever = object.__new__(Retriever)
     retriever.top_k = 2
+    retriever.candidate_k = 10
     retriever.ensemble_weights = [0.5, 0.5]
     retriever._chroma_db = FakeChromaCollection([
         "employee handbook",
@@ -79,12 +137,14 @@ def test_refresh_retrievers_builds_bm25_from_collection(monkeypatch):
         {"source": "hr"},
         {"source": "policy"},
     ]
+    assert retriever._bm25_retriever.k == 10
     assert retriever._ensemble_retriever.weights == [0.5, 0.5]
 
 
 def test_refresh_retrievers_handles_empty_collection():
     retriever = object.__new__(Retriever)
     retriever.top_k = 2
+    retriever.candidate_k = 10
     retriever.ensemble_weights = [0.5, 0.5]
     retriever._chroma_db = FakeChromaCollection([], [])
 
@@ -126,7 +186,7 @@ class FakeChromaCollection:
         self.vector_retriever = object()
 
     def as_retriever(self, search_kwargs):
-        assert search_kwargs == {"k": 2}
+        assert search_kwargs == {"k": 10}
         return self.vector_retriever
 
     def get(self, include):
