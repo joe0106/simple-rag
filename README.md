@@ -22,6 +22,7 @@
 - Python 3.13+
 - [`uv`](https://docs.astral.sh/uv/)
 - Google Gemini API key
+- Cohere API Key
 
 ## 設定與啟動
 
